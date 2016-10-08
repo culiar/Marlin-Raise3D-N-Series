@@ -659,7 +659,7 @@ void manage_heater() {
   for (int e = 0; e < EXTRUDERS; e++) {
 
     #if defined (THERMAL_RUNAWAY_PROTECTION_PERIOD) && THERMAL_RUNAWAY_PROTECTION_PERIOD > 0
-      thermal_runaway_protection(&thermal_runaway_state_machine[e], &thermal_runaway_timer[e], current_temperature[e], target_temperature[e], e, THERMAL_RUNAWAY_PROTECTION_PERIOD, THERMAL_RUNAWAY_PROTECTION_HYSTERESIS);
+      thermal_runaway_protection(&thermal_runaway_state_machine[e], &thermal_runaway_timer[e], current_temperature[e], target_temperature[e], &target_temperature_sampled[e], e, THERMAL_RUNAWAY_PROTECTION_PERIOD, THERMAL_RUNAWAY_PROTECTION_HYSTERESIS);
     #endif
 
     float pid_output = get_pid_output(e);
@@ -705,7 +705,7 @@ void manage_heater() {
   #if TEMP_SENSOR_BED != 0
   
     #if defined(THERMAL_RUNAWAY_PROTECTION_BED_PERIOD) && THERMAL_RUNAWAY_PROTECTION_BED_PERIOD > 0
-      thermal_runaway_protection(&thermal_runaway_bed_state_machine, &thermal_runaway_bed_timer, current_temperature_bed, target_temperature_bed, 9, THERMAL_RUNAWAY_PROTECTION_BED_PERIOD, THERMAL_RUNAWAY_PROTECTION_BED_HYSTERESIS);
+      thermal_runaway_protection(&thermal_runaway_bed_state_machine, &thermal_runaway_bed_timer, current_temperature_bed, target_temperature_bed, &target_temperature_bed_sampled, 9, THERMAL_RUNAWAY_PROTECTION_BED_PERIOD, THERMAL_RUNAWAY_PROTECTION_BED_HYSTERESIS);
     #endif
 
     #ifdef PIDTEMPBED
@@ -1063,7 +1063,7 @@ void setWatch() {
 }
 
 #if defined(THERMAL_RUNAWAY_PROTECTION_PERIOD) && THERMAL_RUNAWAY_PROTECTION_PERIOD > 0
-void thermal_runaway_protection(int *state, unsigned long *timer, float temperature, float target_temperature, int heater_id, int period_seconds, int hysteresis_degc)
+void thermal_runaway_protection(int *state, unsigned long *timer, float temperature, float target_temperature, float *target_temperature_sampled, int heater_id, int period_seconds, int hysteresis_degc)
 {
 /*
       SERIAL_ECHO_START;
@@ -1083,23 +1083,34 @@ void thermal_runaway_protection(int *state, unsigned long *timer, float temperat
   {
     *state = 0;
     *timer = 0;
+    *target_temperature_sampled = 0;
     return;
   }
   switch (*state)
   {
 	case -1: // Change temperature by gcode
-	  if (temperature >= target_temperature) *state = 2;
+      if (temperature >= target_temperature) {
+        *state = 2;
+        *target_temperature_sampled = target_temperature;
+      }
 	  break;
     case 0: // "Heater Inactive" state
       if (target_temperature > 0) *state = 1;
       break;
     case 1: // "First Heating" state
-      if (temperature >= target_temperature) *state = 2;
+      if (temperature >= target_temperature) {
+        *state = 2;
+        *target_temperature_sampled = target_temperature;
+      }
       break;
     case 2: // "Temperature Stable" state
     {
+      if (target_temperature > *target_temperature_sampled) {
+        *state = 1;
+      } else {
+        if (target_temperature < *target_temperature_sampled) *target_temperature_sampled = target_temperature;
       unsigned long ms = millis();
-      if (temperature >= (target_temperature - hysteresis_degc))
+        if (temperature >= (*target_temperature_sampled - hysteresis_degc))
       {
         *timer = ms;
       } 
@@ -1122,6 +1133,7 @@ void thermal_runaway_protection(int *state, unsigned long *timer, float temperat
           disable_e3();
           manage_heater();
           lcd_update();
+          }
         }
       }
     } break;
